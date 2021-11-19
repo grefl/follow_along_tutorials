@@ -9,12 +9,35 @@
 // ----------DEFINES----------
 #define CTRL_KEY(key) ((key) & 0x1f)
 #define CTRL_Q (('q') & 0x1f)
+#define VERSION "0.0.1"
 
 // ----------DATA----------
+enum EditorMode {
+  VISUAL = 'v',
+  INSERT = 'i',
+};
+
+enum editorKey {
+  CURSOR_LEFT = 1000,
+  CURSOR_RIGHT,
+  CURSOR_UP,
+  CURSOR_DOWN,
+  PAGE_UP,
+  PAGE_DOWN,
+  DELETE_KEY,
+  HOME_KEY,
+  END_KEY,
+};
 
 struct editorConfig {
+  // Cursor stuff
+  int cursor_x;
+  int cursor_y;
+  // Editor stuff 
   int rows;
   int cols;
+  char mode;
+  // External terminal stuff - at the moment just used to turn on RAW_MODE 
   struct termios orig_termios;
 };
 
@@ -28,6 +51,11 @@ void clearScreenAndPutCursorTopStart() {
 }
 
 void writeRow(const char *c, int len) {
+  write(STDOUT_FILENO, c, len);
+}
+// Same as writeRow but used for rendering chunks
+// TODO:(grefl) not ideal, change later?
+void render(const char *c, int len) {
   write(STDOUT_FILENO, c, len);
 }
 
@@ -68,7 +96,7 @@ void enableRawMode() {
     die("Failed to set Raw_Mode");
 }
 
-char editorReadKey() {
+int editorReadKey() {
   int nread;
   char c = '\0';
   while((nread = read(STDIN_FILENO, &c, 1)) != 1) {
@@ -76,7 +104,57 @@ char editorReadKey() {
     if (nread == -1 && errno != EAGAIN)
       die("Failed to call 'read'");
   }
-  return c;
+  char sequence_symbol = '\x1b'; 
+  // if escape sequence
+  if (c == sequence_symbol) {
+   char sequence[3]; 
+
+   if (read(STDIN_FILENO, &sequence[0], 1) != 1) return sequence_symbol;
+   if (read(STDIN_FILENO, &sequence[1], 1) != 1) return sequence_symbol;
+
+   if (sequence[0] == '[') {
+    if (sequence[1] >= '0' && sequence[1] <= '9') {
+      if (read(STDIN_FILENO, &sequence[2], 1) != 1) return sequence_symbol;
+      if (sequence[2] == '~') {
+        switch(sequence[1]) {
+          case '1': return HOME_KEY;
+          case '3': return DELETE_KEY;
+          case '4': return END_KEY;
+          case '5': return PAGE_UP;
+          case '6': return PAGE_DOWN;
+          case '7': return HOME_KEY;
+          case '8': return END_KEY;
+        }
+      }
+    } else {
+      switch(sequence[1]) {
+        case 'A': return CURSOR_UP; 
+        case 'B': return CURSOR_DOWN; 
+        case 'C': return CURSOR_RIGHT; 
+        case 'D': return CURSOR_LEFT; 
+        case 'H': return HOME_KEY; 
+        case 'F': return END_KEY; 
+      }
+    }
+   //return sequence_symbol;
+   } else if (sequence[0] == 'O') {
+      switch(sequence[1]) {
+        case 'H': return HOME_KEY;
+        case 'F': return END_KEY;
+      }
+   }
+   return sequence_symbol;
+  } else {
+    if (Editor.mode == VISUAL) {
+      switch (c) {
+          case 'j': return CURSOR_DOWN;
+          case 'k': return CURSOR_UP;
+          case 'h': return CURSOR_LEFT;
+          case 'l': return CURSOR_RIGHT;
+      }
+    }
+    return c;
+  }
 }
 
 int getCursorPositionFallBack(int *rows, int *cols) {
@@ -137,36 +215,118 @@ void editorDrawRows(struct String *str) {
 
   int y = 0;
   for (; y < Editor.rows; y++) {
-    if (y < Editor.rows -1) { 
-      StringAdd(str, "~\r\n", 3);
-    } else {
+    if (y == Editor.rows / 2) {
+      char welcome_message[80];
+      int len = snprintf(welcome_message, sizeof(welcome_message),
+        "Kilo editor -- version %s", VERSION);
+      if (len > Editor.cols) len = Editor.cols;
+      int padding = (Editor.cols - len) / 2;
+      if (padding) {
+        StringAdd(str, " ", 1);
+        padding--;
+        while (padding--) StringAdd(str, " ", 1);
+      }
+      StringAdd(str, welcome_message, len);
+    } else if (y < Editor.rows -1) {
       StringAdd(str, "~", 1);
+    }
+    // clear single line to the RIGHT of the cursor
+    StringAdd(str, "\x1b[K",3);
+
+    if (y < Editor.rows - 1) { 
+      StringAdd(str, "\r\n", 2);
+    } else {
+      // status bar
+      if (Editor.mode == VISUAL) {
+        StringAdd(str, "-- VISUAL --", 12);
+      } else {
+        StringAdd(str, "-- INSERT --", 12);
+      }
     }
   }
 }
 
 void editorRefreshScreen() {
   struct String str = {NULL, 0};
-
-  StringAdd(&str, "\x1b[2J", 4);
+  // Clear cursor before generating rows 
+  // To prevent flickering
+  StringAdd(&str, "\x1b[?25l", 6);
+  // Set Cursor to {x: 0, y:0}
   StringAdd(&str, "\x1b[H", 3);
 
   editorDrawRows(&str);
+  
+  char buf[32];
+  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", Editor.cursor_y + 1, Editor.cursor_x + 1);
+  // Cursor -> x,y
+  StringAdd(&str, buf, strlen(buf));
 
-  StringAdd(&str, "\x1b[H", 3);
-  writeRow(str.b, str.len);
+  // Add cursor back
+  StringAdd(&str, "\x1b[?25h", 6);
+
+  // Render 
+  render(str.b, str.len);
   StringFree(&str);
 }
 
 // ----------INPUT----------
 
+void editorMoveCursor(int key) {
+  
+  switch(key) {
+    case CURSOR_DOWN:
+      if (Editor.cursor_y < Editor.rows - 2)
+        Editor.cursor_y ++; 
+      break;
+    case CURSOR_UP:
+      if (Editor.cursor_y > 0)
+        Editor.cursor_y --;
+      break;
+    case CURSOR_LEFT:
+      if (Editor.cursor_x > 0)
+        Editor.cursor_x --;
+      break;
+    case CURSOR_RIGHT:
+      if (Editor.cursor_x < Editor.cols - 1)
+        Editor.cursor_x ++;
+      break;
+  }
+
+}
+
 void editorProcessKeypress() {
-  char c = editorReadKey();
+  int c = editorReadKey();
 
   switch (c) {
     case CTRL_Q:
       clearScreenAndPutCursorTopStart();
       exit(0);
+      break;
+    
+
+    case HOME_KEY:
+      Editor.cursor_x = 0;
+      break;
+    case END_KEY:
+      Editor.cursor_x = Editor.cols -1;
+      break;
+
+
+    case PAGE_UP:
+    case PAGE_DOWN:
+      {
+        int times = Editor.rows;
+        while (times--)
+          editorMoveCursor(c == PAGE_UP ? CURSOR_UP : CURSOR_DOWN);
+      }
+      break;
+
+
+    case CURSOR_UP:
+    case CURSOR_DOWN:
+    case CURSOR_RIGHT:
+    case CURSOR_LEFT:
+      editorMoveCursor(c);
       break;
   }
 }
@@ -174,6 +334,11 @@ void editorProcessKeypress() {
 // ----------INIT----------
 
 void initEditor() {
+  // CURSOR init
+  Editor.cursor_x = 0;
+  Editor.cursor_y = 0;
+  Editor.mode = VISUAL;
+
   int failedToGetWindowSize = getWindowSize(&Editor.rows, &Editor.cols) == -1;
 
   if (failedToGetWindowSize)
