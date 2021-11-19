@@ -34,8 +34,8 @@ struct editorConfig {
   int cursor_x;
   int cursor_y;
   // Editor stuff 
-  int rows;
-  int cols;
+  int screen_rows;
+  int screen_cols;
   char mode;
   // External terminal stuff - at the moment just used to turn on RAW_MODE 
   struct termios orig_termios;
@@ -214,26 +214,26 @@ void StringFree(struct String *current_String) {
 void editorDrawRows(struct String *str) {
 
   int y = 0;
-  for (; y < Editor.rows; y++) {
-    if (y == Editor.rows / 2) {
+  for (; y < Editor.screen_rows; y++) {
+    if (y == Editor.screen_rows / 2) {
       char welcome_message[80];
       int len = snprintf(welcome_message, sizeof(welcome_message),
         "Kilo editor -- version %s", VERSION);
-      if (len > Editor.cols) len = Editor.cols;
-      int padding = (Editor.cols - len) / 2;
+      if (len > Editor.screen_cols) len = Editor.screen_cols;
+      int padding = (Editor.screen_cols - len) / 2;
       if (padding) {
         StringAdd(str, " ", 1);
         padding--;
         while (padding--) StringAdd(str, " ", 1);
       }
       StringAdd(str, welcome_message, len);
-    } else if (y < Editor.rows -1) {
+    } else if (y < Editor.screen_rows -1) {
       StringAdd(str, "~", 1);
     }
     // clear single line to the RIGHT of the cursor
     StringAdd(str, "\x1b[K",3);
 
-    if (y < Editor.rows - 1) { 
+    if (y < Editor.screen_rows - 1) { 
       StringAdd(str, "\r\n", 2);
     } else {
       // status bar
@@ -275,7 +275,7 @@ void editorMoveCursor(int key) {
   
   switch(key) {
     case CURSOR_DOWN:
-      if (Editor.cursor_y < Editor.rows - 2)
+      if (Editor.cursor_y < Editor.screen_rows - 2)
         Editor.cursor_y ++; 
       break;
     case CURSOR_UP:
@@ -287,7 +287,7 @@ void editorMoveCursor(int key) {
         Editor.cursor_x --;
       break;
     case CURSOR_RIGHT:
-      if (Editor.cursor_x < Editor.cols - 1)
+      if (Editor.cursor_x < Editor.screen_cols - 1)
         Editor.cursor_x ++;
       break;
   }
@@ -308,14 +308,14 @@ void editorProcessKeypress() {
       Editor.cursor_x = 0;
       break;
     case END_KEY:
-      Editor.cursor_x = Editor.cols -1;
+      Editor.cursor_x = Editor.screen_cols -1;
       break;
 
 
     case PAGE_UP:
     case PAGE_DOWN:
       {
-        int times = Editor.rows;
+        int times = Editor.screen_rows;
         while (times--)
           editorMoveCursor(c == PAGE_UP ? CURSOR_UP : CURSOR_DOWN);
       }
@@ -339,7 +339,7 @@ void initEditor() {
   Editor.cursor_y = 0;
   Editor.mode = VISUAL;
 
-  int failedToGetWindowSize = getWindowSize(&Editor.rows, &Editor.cols) == -1;
+  int failedToGetWindowSize = getWindowSize(&Editor.screen_rows, &Editor.screen_cols) == -1;
 
   if (failedToGetWindowSize)
     die("ERROR: failed to init editor due to getWindowSize() failing");
