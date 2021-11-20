@@ -1,1 +1,1 @@
-gcc main.c -o main -Wall -Wextra -pedantic
+gcc main.c -o editor -Wall -Wextra -pedantic
