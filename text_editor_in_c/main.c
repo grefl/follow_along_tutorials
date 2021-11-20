@@ -1,9 +1,14 @@
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <termios.h>
 #include <unistd.h>
 // ----------DEFINES----------
@@ -16,7 +21,7 @@ enum EditorMode {
   VISUAL = 'v',
   INSERT = 'i',
 };
-
+  
 enum editorKey {
   CURSOR_LEFT = 1000,
   CURSOR_RIGHT,
@@ -28,15 +33,23 @@ enum editorKey {
   HOME_KEY,
   END_KEY,
 };
+typedef struct editorRow {
+  int size;
+  char *chars;
+} editorRow;
 
 struct editorConfig {
   // Cursor stuff
   int cursor_x;
   int cursor_y;
+  int row_offset;
+  int col_offset;
   // Editor stuff 
   int screen_rows;
   int screen_cols;
   char mode;
+  int num_rows;
+  editorRow *row;
   // External terminal stuff - at the moment just used to turn on RAW_MODE 
   struct termios orig_termios;
 };
@@ -187,6 +200,38 @@ int getWindowSize(int *rows, int *cols) {
     return 0;
   }
 }
+
+void editorAppendRow(char *line, size_t line_len) {
+    Editor.row = realloc(Editor.row, sizeof(editorRow) * (Editor.num_rows + 1));
+    int index = Editor.num_rows;
+
+    Editor.row[index].size = line_len;
+    Editor.row[index].chars = malloc(line_len + 1);
+    memcpy(Editor.row[index].chars, line, line_len);
+    Editor.row[index].chars[line_len] = '\0';
+    Editor.num_rows++;
+}
+
+// ----------FILE I/O----------
+
+void editorOpen(char *filename) {
+  FILE *fp = fopen(filename, "r");
+  if (!fp) die("ERROR: Failed to open file");
+
+  char *line = NULL; 
+  size_t line_capacity = 0;
+  ssize_t line_len;
+  line_len = getline(&line, &line_capacity, fp);
+  while ((line_len = getline(&line, &line_capacity, fp)) != -1) {
+    while (line_len > 0 && (line[line_len -1] == '\n' || line[line_len -1] == '\r'))
+      line_len--;
+    editorAppendRow(line, line_len);
+  }
+
+  free(line);
+  fclose(fp);
+}
+
 // ----------Custom Buffers----------
 
 // is a dynamic/appendable buffer
@@ -211,42 +256,70 @@ void StringFree(struct String *current_String) {
 
 // ----------OUTPUT----------
 
+void editorScroll() {
+  
+  if (Editor.cursor_y < Editor.row_offset) {
+    Editor.row_offset = Editor.cursor_y; 
+  }
+  if (Editor.cursor_y >= Editor.row_offset + Editor.screen_rows) {
+    Editor.row_offset = Editor.cursor_y - Editor.screen_rows + 1; 
+  }
+  if (Editor.cursor_x < Editor.col_offset) {
+    Editor.col_offset = Editor.cursor_x;
+  }
+  if (Editor.cursor_x >= Editor.screen_cols) {
+    Editor.col_offset = Editor.cursor_x - Editor.screen_cols + 1;
+  }
+}
+
 void editorDrawRows(struct String *str) {
 
-  int y = 0;
-  for (; y < Editor.screen_rows; y++) {
-    if (y == Editor.screen_rows / 2) {
-      char welcome_message[80];
-      int len = snprintf(welcome_message, sizeof(welcome_message),
-        "Kilo editor -- version %s", VERSION);
-      if (len > Editor.screen_cols) len = Editor.screen_cols;
-      int padding = (Editor.screen_cols - len) / 2;
-      if (padding) {
-        StringAdd(str, " ", 1);
-        padding--;
-        while (padding--) StringAdd(str, " ", 1);
+  int y;
+  for (y = 0; y < Editor.screen_rows; y++) {
+    int file_row = y + Editor.row_offset;
+    if (file_row >= Editor.num_rows) {
+      if (Editor.num_rows == 0 && y == Editor.screen_rows / 2) {
+        char welcome_message[80];
+        int len = snprintf(welcome_message, sizeof(welcome_message),
+          "Kilo editor -- version %s", VERSION);
+        if (len > Editor.screen_cols) len = Editor.screen_cols;
+        int padding = (Editor.screen_cols - len) / 2;
+        if (padding) {
+          StringAdd(str, " ", 1);
+          padding--;
+          while (padding--) StringAdd(str, " ", 1);
+        }
+        StringAdd(str, welcome_message, len);
+      } else if (y < Editor.screen_rows -1) {
+        StringAdd(str, "~", 1);
       }
-      StringAdd(str, welcome_message, len);
-    } else if (y < Editor.screen_rows -1) {
-      StringAdd(str, "~", 1);
+    } else {
+      int row_len = Editor.row[file_row].size - Editor.col_offset;
+      if (row_len < 0) row_len = 0;
+      if (row_len > Editor.screen_cols) row_len = Editor.screen_cols;
+      StringAdd(str, &Editor.row[file_row].chars[Editor.col_offset], row_len);
     }
     // clear single line to the RIGHT of the cursor
     StringAdd(str, "\x1b[K",3);
 
     if (y < Editor.screen_rows - 1) { 
       StringAdd(str, "\r\n", 2);
-    } else {
-      // status bar
-      if (Editor.mode == VISUAL) {
-        StringAdd(str, "-- VISUAL --", 12);
-      } else {
-        StringAdd(str, "-- INSERT --", 12);
-      }
-    }
+    } 
+   // else {
+   //   // status bar
+   //   if (Editor.mode == VISUAL) {
+   //     StringAdd(str, "-- VISUAL --", 12);
+   //   } else {
+   //     StringAdd(str, "-- INSERT --", 12);
+   //   }
+   // }
+
   }
 }
 
 void editorRefreshScreen() {
+  editorScroll();
+
   struct String str = {NULL, 0};
   // Clear cursor before generating rows 
   // To prevent flickering
@@ -257,7 +330,7 @@ void editorRefreshScreen() {
   editorDrawRows(&str);
   
   char buf[32];
-  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", Editor.cursor_y + 1, Editor.cursor_x + 1);
+  snprintf(buf, sizeof(buf), "\x1b[%d;%dH", (Editor.cursor_y - Editor.row_offset) + 1, (Editor.cursor_x - Editor.col_offset) + 1);
   // Cursor -> x,y
   StringAdd(&str, buf, strlen(buf));
 
@@ -272,10 +345,10 @@ void editorRefreshScreen() {
 // ----------INPUT----------
 
 void editorMoveCursor(int key) {
-  
+  editorRow *row = (Editor.cursor_y >= Editor.num_rows) ? NULL : &Editor.row[Editor.cursor_y]; 
   switch(key) {
     case CURSOR_DOWN:
-      if (Editor.cursor_y < Editor.screen_rows - 2)
+      if (Editor.cursor_y < Editor.num_rows)
         Editor.cursor_y ++; 
       break;
     case CURSOR_UP:
@@ -285,12 +358,28 @@ void editorMoveCursor(int key) {
     case CURSOR_LEFT:
       if (Editor.cursor_x > 0)
         Editor.cursor_x --;
+      else if (Editor.cursor_y > 0) {
+        Editor.cursor_y -= 1;
+        Editor.cursor_x = Editor.row[Editor.cursor_y].size; 
+      }
       break;
     case CURSOR_RIGHT:
-      if (Editor.cursor_x < Editor.screen_cols - 1)
+      if (row && Editor.cursor_x < row->size) {
         Editor.cursor_x ++;
+      }
+      else if (row && Editor.cursor_x == row->size) {
+        Editor.cursor_y += 1;
+        Editor.cursor_x  = 0;
+      }
       break;
   }
+
+  // Correct the x position if the next row is smaller than the previous
+  row = (Editor.cursor_y >= Editor.num_rows) ? NULL : &Editor.row[Editor.cursor_y];
+  int row_len = row ? row->size : 0;
+  if (Editor.cursor_x > row_len)
+    Editor.cursor_x = row_len;
+  
 
 }
 
@@ -337,7 +426,11 @@ void initEditor() {
   // CURSOR init
   Editor.cursor_x = 0;
   Editor.cursor_y = 0;
+  Editor.row_offset = 0;
+  Editor.col_offset = 0;
   Editor.mode = VISUAL;
+  Editor.num_rows = 0;
+  Editor.row = NULL;
 
   int failedToGetWindowSize = getWindowSize(&Editor.screen_rows, &Editor.screen_cols) == -1;
 
@@ -345,9 +438,12 @@ void initEditor() {
     die("ERROR: failed to init editor due to getWindowSize() failing");
 
 }
-int main() {
+int main(int argc, char *argv[]) {
   enableRawMode();
   initEditor();
+  if (argc >=2) {
+    editorOpen(argv[1]);
+  }
   while (1) {
     editorRefreshScreen();
     editorProcessKeypress();
