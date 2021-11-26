@@ -39,6 +39,22 @@ bool handle_event(SDL_Event *event) {
               printf("SDL_WINDOWEVENT_RESIZED (%d, %d)\n", event->window.data1, event->window.data2);
             } 
             break;
+          case SDL_WINDOWEVENT_EXPOSED:
+            {
+              SDL_Window *window = SDL_GetWindowFromID(event->window.windowID);
+              SDL_Renderer *renderer = SDL_GetRenderer(window);
+              static bool is_white = true;
+              if (is_white) {
+                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+                is_white = false;
+              } else {
+                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                is_white = true;
+              }
+              SDL_RenderClear(renderer);
+              SDL_RenderPresent(renderer);
+            }
+            break;
         }
       }
       break;
@@ -50,18 +66,24 @@ bool handle_event(SDL_Event *event) {
 //------------RUN------------
 int main(int argc, char *argv[]) {
   scc(SDL_Init(SDL_INIT_VIDEO) !=0);
-  SDL_Window *Window;
-  Window = SDL_CreateWindow("Handmade Hero",
+  SDL_Window *window;
+  window = SDL_CreateWindow("Handmade Hero",
       SDL_WINDOWPOS_UNDEFINED,
       SDL_WINDOWPOS_UNDEFINED,
       640,
       480,
       SDL_WINDOW_RESIZABLE);
-  for (;;) {
-    SDL_Event event;
-    SDL_WaitEvent(&event);
-    if (handle_event(&event))
-      break;
+
+  if (window) {
+    SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, 0);
+    scp(&renderer);
+    for (;;) {
+      SDL_Event event;
+      SDL_WaitEvent(&event);
+      if (handle_event(&event))
+        break;
+    }
+
   }
   SDL_Quit();
   return(0);
