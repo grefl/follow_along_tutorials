@@ -109,6 +109,7 @@ bool handle_event(SDL_Event *event) {
 
 
 //------------RUN------------
+
 int main(int argc, char *argv[]) {
   scc(SDL_Init(SDL_INIT_VIDEO) !=0);
   SDL_Window *window;
@@ -134,3 +135,9 @@ int main(int argc, char *argv[]) {
   SDL_Quit();
   return(0);
 }
+
+
+//------------MEMORY MANAGEMENT -> "LINUX ONLY"------------
+//sys/mman.h
+//pixesl = mmap(0, width* height * 4, PROT_READ | PROT_WRTE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+//munmap(pixles, width * height * 4);
