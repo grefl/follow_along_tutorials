@@ -1,6 +1,23 @@
 #include <SDL.h>
+#include <stdlib.h>
+
+//------------DEFINES------------
+
+#define internal static
+#define local_persist static
+#define global_variable static
+
+
+//------------GLOBALS------------
+
+global_variable SDL_Texture *texture;
+global_variable void *pixels;
+global_variable int texture_width;
+
+
 
 //------------HELPERS------------
+
 void scc(int code) {
 
   if (code < 0) {
@@ -17,7 +34,34 @@ void *scp(void *ptr) {
   return ptr;
 }
 
+//------------TEXTURE------------
 
+internal void
+resize_texture(SDL_Renderer *renderer, int width, int height) {
+  if (pixels) {
+    free(pixels);
+  }
+  if (texture) {
+    SDL_DestroyTexture(texture);
+  }
+
+  SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
+  texture_width = width;
+  void *pixels = malloc(width * height * 4);
+}
+internal void
+update_window(SDL_Window *window, SDL_Renderer *renderer) {
+  SDL_UpdateTexture(texture,
+      0,
+      pixels,
+      texture_width * 4);
+
+  SDL_RenderCopy(renderer,
+      texture,
+      0,
+      0);
+  SDL_RenderPresent(renderer);
+}
 //------------INPUT------------
 
 bool handle_event(SDL_Event *event) {
@@ -34,25 +78,26 @@ bool handle_event(SDL_Event *event) {
     case SDL_WINDOWEVENT:
       {
         switch(event->window.event) {
-          case SDL_WINDOWEVENT_RESIZED: 
+          case SDL_WINDOWEVENT_SIZE_CHANGED: 
             {
+              SDL_Window *window = SDL_GetWindowFromID(event->window.windowID);
+              SDL_Renderer *renderer = SDL_GetRenderer(window);
+              // DEBUG
               printf("SDL_WINDOWEVENT_RESIZED (%d, %d)\n", event->window.data1, event->window.data2);
+              resize_texture(renderer, event->window.data1, event->window.data2);
             } 
+            break;
+          case SDL_WINDOWEVENT_FOCUS_GAINED:
+            {
+              printf("SDL_WINDOWEVENT_FOCUS_GAINED \n");
+            }
             break;
           case SDL_WINDOWEVENT_EXPOSED:
             {
               SDL_Window *window = SDL_GetWindowFromID(event->window.windowID);
               SDL_Renderer *renderer = SDL_GetRenderer(window);
-              static bool is_white = true;
-              if (is_white) {
-                SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
-                is_white = false;
-              } else {
-                SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-                is_white = true;
-              }
-              SDL_RenderClear(renderer);
-              SDL_RenderPresent(renderer);
+              update_window(window, renderer);
+
             }
             break;
         }
@@ -73,6 +118,7 @@ int main(int argc, char *argv[]) {
       640,
       480,
       SDL_WINDOW_RESIZABLE);
+
 
   if (window) {
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, 0);
