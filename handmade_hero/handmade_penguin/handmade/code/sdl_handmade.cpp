@@ -1,5 +1,6 @@
 #include <SDL.h>
 #include <stdlib.h>
+#include <stdint.h>
 
 //------------DEFINES------------
 
@@ -7,12 +8,24 @@
 #define local_persist static
 #define global_variable static
 
+typedef int8_t int8;
+typedef int16_t int16;
+typedef int32_t int32;
+typedef int64_t int64;
+
+
+typedef uint8_t uint8;
+typedef uint16_t uint16;
+typedef uint32_t uint32;
+typedef uint64_t uint64;
+
 
 //------------GLOBALS------------
 
 global_variable SDL_Texture *texture;
-global_variable void *bit_map_memory;
-global_variable int bit_map_width;
+global_variable void *bitmap_memory;
+global_variable int bitmap_width;
+global_variable int bitmap_height;
 global_variable int bytes_per_pixel = 4;
 
 
@@ -37,24 +50,45 @@ void *scp(void *ptr) {
 //------------TEXTURE------------
 
 internal void
+render_weird_gradient(int blue_offset, int green_offset) {
+  printf("render_weird_gradient\n");
+  int width  = bitmap_width; 
+  int height = bitmap_height;
+  int pitch  = width * bytes_per_pixel;
+  uint8 *row = (uint8 *)bitmap_memory;
+  for (int y = 0; y < bitmap_height; ++y) {
+    uint32 *pixel = (uint32 *)row;
+    for (int x = 0; x < bitmap_width; ++x) {
+      uint8 blue (x + blue_offset);
+      uint8 green (x + green_offset);
+      *pixel++ = ((green << 8) | blue);
+    }
+    row += pitch;
+  }
+}
+
+internal void
 resize_texture(SDL_Renderer *renderer, int width, int height) {
-  if (bit_map_memory) {
-    free(bit_map_memory);
+  printf("resize_texture\n");
+  if (bitmap_memory) {
+    free(bitmap_memory);
   }
   if (texture) {
     SDL_DestroyTexture(texture);
   }
 
-  SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
-  bit_map_width = width;
-  void *bit_map_memory = malloc(width * height * bytes_per_pixel);
+  texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
+  bitmap_width  = width;
+  bitmap_height = height;
+  bitmap_memory = malloc(width * height * bytes_per_pixel);
 }
 internal void
 update_window(SDL_Window *window, SDL_Renderer *renderer) {
+  printf("update_window\n");
   SDL_UpdateTexture(texture,
       0,
-      bit_map_memory,
-      bit_map_width * bytes_per_pixel);
+      bitmap_memory,
+      bitmap_width * bytes_per_pixel);
 
   SDL_RenderCopy(renderer,
       texture,
@@ -80,6 +114,7 @@ bool handle_event(SDL_Event *event) {
         switch(event->window.event) {
           case SDL_WINDOWEVENT_SIZE_CHANGED: 
             {
+              printf("SDL_WINDOWEVENT_SIZE_CHANGED \n");
               SDL_Window *window = SDL_GetWindowFromID(event->window.windowID);
               SDL_Renderer *renderer = SDL_GetRenderer(window);
               // DEBUG
@@ -94,6 +129,7 @@ bool handle_event(SDL_Event *event) {
             break;
           case SDL_WINDOWEVENT_EXPOSED:
             {
+              printf("SDL_WINDOWEVENT_EXPOSED \n");
               SDL_Window *window = SDL_GetWindowFromID(event->window.windowID);
               SDL_Renderer *renderer = SDL_GetRenderer(window);
               update_window(window, renderer);
@@ -124,11 +160,27 @@ int main(int argc, char *argv[]) {
   if (window) {
     SDL_Renderer *renderer = SDL_CreateRenderer(window, -1, 0);
     scp(&renderer);
-    for (;;) {
+
+    int width, height;
+    SDL_GetWindowSize(window, &width, &height);
+    resize_texture(renderer, width, height); 
+
+    int x_offset = 0;
+    int y_offset = 0;
+
+    bool running = true;
+    while (running) {
       SDL_Event event;
-      SDL_WaitEvent(&event);
-      if (handle_event(&event))
-        break;
+      while(SDL_PollEvent(&event)) {
+        printf("running\n");
+        if (handle_event(&event))
+          running = false;
+      }
+      render_weird_gradient(x_offset, y_offset);
+      update_window(window, renderer);
+
+      ++x_offset;
+      y_offset +=2 ;
     }
 
   }
