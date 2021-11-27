@@ -11,9 +11,9 @@
 //------------GLOBALS------------
 
 global_variable SDL_Texture *texture;
-global_variable void *pixels;
-global_variable int texture_width;
-
+global_variable void *bit_map_memory;
+global_variable int bit_map_width;
+global_variable int bytes_per_pixel = 4;
 
 
 //------------HELPERS------------
@@ -38,23 +38,23 @@ void *scp(void *ptr) {
 
 internal void
 resize_texture(SDL_Renderer *renderer, int width, int height) {
-  if (pixels) {
-    free(pixels);
+  if (bit_map_memory) {
+    free(bit_map_memory);
   }
   if (texture) {
     SDL_DestroyTexture(texture);
   }
 
   SDL_Texture *texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, width, height);
-  texture_width = width;
-  void *pixels = malloc(width * height * 4);
+  bit_map_width = width;
+  void *bit_map_memory = malloc(width * height * bytes_per_pixel);
 }
 internal void
 update_window(SDL_Window *window, SDL_Renderer *renderer) {
   SDL_UpdateTexture(texture,
       0,
-      pixels,
-      texture_width * 4);
+      bit_map_memory,
+      bit_map_width * bytes_per_pixel);
 
   SDL_RenderCopy(renderer,
       texture,
